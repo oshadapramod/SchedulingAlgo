@@ -425,7 +425,6 @@ def auto_select_algorithm(tasks):
     else:
         return "First Come First Served (FCFS)"
 
-
 algo_choice = ttk.Combobox(frame, values=["Auto Select", "First Come First Served (FCFS)", "Round Robin", "Shortest Process Next", "Shortest Remaining Time Next", "Priority Scheduling"])
 algo_choice.grid(row=3, column=1)
 algo_choice.set("Auto Select")
