@@ -18,7 +18,6 @@ def fcfs(tasks):
         start_time=current_time
         current_time += burst
     
-    
         execution_order.append((pid, start_time, burst))
 
     return execution_order
@@ -58,7 +57,6 @@ def round_robin(tasks, quantum=1):
     return execution_order
 
 def shortest_process_next(tasks):
-
     tasks.sort(key=lambda x: x[1])  
     ready_queue = []
     current_time = 0
@@ -89,45 +87,97 @@ def shortest_process_next(tasks):
         execution_order.append((pid, start_time, burst))
 
     return execution_order
+
 def shortest_remaining_time_next(tasks):
     tasks.sort(key=lambda x: x[1])
-    remaining_time = {pid: burst for pid, _, burst, _ in tasks}
-    time, execution_order = 0, []
-    
-    while remaining_time:
-        available_tasks = [task for task in tasks if task[1] <= time and task[0] in remaining_time]
-        if available_tasks:
-            pid = min(available_tasks, key=lambda x: remaining_time[x[0]])[0]
-            remaining_time[pid] -= 1
-            if remaining_time[pid] == 0:
-                del remaining_time[pid]
-        time += 1
-        execution_order.append((pid, time, 1) if available_tasks else ('idle', time, 1))
 
-    return execution_order
+    remaining_time = {task[0]: task[2] for task in tasks}
+
+    current_time = 0
+
+    execution_intervals = []
+
+    running_process = None
+    process_start_time = 0
+
+    while remaining_time:
+        available_tasks = [task for task in tasks if task[1] <= current_time and task[0] in remaining_time]
+
+        next_process = None
+        if available_tasks:
+            next_process = min(available_tasks, key=lambda x: remaining_time[x[0]])[0]
+
+        if running_process is not None and (next_process != running_process or not available_tasks):
+            execution_time = current_time - process_start_time
+            if execution_time > 0:
+                execution_intervals.append((running_process, process_start_time, execution_time))
+            running_process = None
+
+        if not available_tasks:
+            future_tasks = [task for task in tasks if task[0] in remaining_time]
+            if future_tasks:
+                current_time = min(future_tasks, key=lambda x: x[1])[1]
+                continue
+            else:
+                break  
+
+        if running_process != next_process:
+            running_process = next_process
+            process_start_time = current_time
+
+        remaining_time[next_process] -= 1
+        current_time += 1
+
+        if remaining_time[next_process] == 0:
+            execution_time = current_time - process_start_time
+            execution_intervals.append((next_process, process_start_time, execution_time))
+            del remaining_time[next_process]
+            running_process = None
+    
+    return execution_intervals
 
 def priority_scheduling(tasks):
-    tasks.sort(key=lambda x: (x[1], x[3]))  
-    time, queue, execution_order = 0, [], []
+    tasks.sort(key=lambda x: x[1]) 
+    current_time = 0
+    execution_order = []
+    remaining_tasks = tasks.copy()
+    ready_queue = []
     
-    while tasks or queue:
-        queue += [tasks.pop(0) for _ in range(len(tasks)) if tasks and tasks[0][1] <= time]
-        
-        if queue:
-            queue.sort(key=lambda x: x[3])
-            pid, _, burst, _ = queue.pop(0)
-            execution_order.append((pid, time, burst))
-            time += burst
-        else:
-            time = tasks[0][1] if tasks else time  
+    while remaining_tasks or ready_queue:
+        i = 0
+        while i < len(remaining_tasks):
+            if remaining_tasks[i][1] <= current_time:
+                ready_queue.append(remaining_tasks.pop(i))
+            else:
+                i += 1
 
-    print(execution_order)
+        if not ready_queue:
+            current_time = remaining_tasks[0][1]
+            ready_queue.append(remaining_tasks.pop(0))
+
+        ready_queue.sort(key=lambda x: x[3])
+
+        task = ready_queue.pop(0)
+        pid, arrival, burst, priority = task
+        start_time = current_time
+        current_time += burst
+        
+        execution_order.append((pid, start_time, burst))
+    
     return execution_order
 
 def add_task():
-    task_table.insert("", tk.END, values=(entry_pid.get(), entry_arrival.get(), entry_burst.get(), entry_priority.get()))
-    clear_input_fields()
-    entry_pid.focus()
+    try:
+        pid = int(entry_pid.get())
+        arrival = int(entry_arrival.get())
+        burst = int(entry_burst.get())
+        priority = int(entry_priority.get())
+        
+        task_table.insert("", tk.END, values=(pid, arrival, burst, priority))
+        clear_input_fields()
+        entry_pid.focus()
+    except ValueError:
+        messagebox.showerror("Error", "Please enter valid integer values")
 
 def clear_input_fields():
     entry_pid.delete(0, tk.END)
@@ -175,7 +225,7 @@ def calculate_schedule():
 def select_best_algorithm(tasks):
     algorithms = {
         "First Come First Served (FCFS)": fcfs,
-        "Round Robin": lambda t: round_robin(t, quantum=2),  # Default quantum = 2
+        "Round Robin": lambda t: round_robin(t, quantum=2),
         "Shortest Process Next": shortest_process_next,
         "Shortest Remaining Time Next": shortest_remaining_time_next,
         "Priority Scheduling": priority_scheduling
@@ -186,49 +236,62 @@ def select_best_algorithm(tasks):
     best_execution_order = []
     
     for name, algo in algorithms.items():
-        execution_order = algo(tasks[:])  # Copy to avoid modifying original tasks
-        avg_waiting_time = calculate_avg_waiting_time(tasks, execution_order)
-        
-        if avg_waiting_time < best_avg_waiting_time:
-            best_avg_waiting_time = avg_waiting_time
-            best_algorithm = name
-            best_execution_order = execution_order
+        try:
+            execution_order = algo(tasks[:])
+            avg_waiting_time = calculate_avg_waiting_time(tasks, execution_order)
+            
+            if avg_waiting_time < best_avg_waiting_time:
+                best_avg_waiting_time = avg_waiting_time
+                best_algorithm = name
+                best_execution_order = execution_order
+        except Exception as e:
+            print(f"Error with {name}: {e}")
+            continue
     
     return best_algorithm, best_execution_order
 
-
 def calculate_avg_waiting_time(tasks, execution_order):
-    completion = [-1 for _ in tasks]
-    turnaround = [0 for _ in tasks]
-    waiting = [0 for _ in tasks]
+    pid_to_index = {task[0]: i for i, task in enumerate(tasks)}
+    completion = [-1] * len(tasks)
+    turnaround = [0] * len(tasks)
+    waiting = [0] * len(tasks)
     
     for ex in execution_order:
-        completion[ex[0] - 1] = max(ex[1] + ex[2], completion[ex[0] - 1])
+        pid, start_time, burst = ex
+        task_index = pid_to_index[pid]
+        end_time = start_time + burst
+        
+        completion[task_index] = max(end_time, completion[task_index])
     
-    for task in tasks:
-        turnaround[task[0] - 1] = completion[task[0] - 1] - task[1]
-        waiting[task[0] - 1] = turnaround[task[0] - 1] - task[2]
+    for i, task in enumerate(tasks):
+        pid, arrival, burst, _ = task
+        turnaround[i] = completion[i] - arrival
+        waiting[i] = turnaround[i] - burst
     
     return sum(waiting) / len(tasks)  # Average waiting time
 
-
-def display_results(tasks,algorithm, execute):
+def display_results(tasks, algorithm, execution_order):
     result_window = tk.Toplevel(root)
     result_window.title("Scheduling Results")
+
+    pid_to_index = {task[0]: i for i, task in enumerate(tasks)}
+
+    completion = [-1] * len(tasks)
+    turnaround = [0] * len(tasks)
+    waiting = [0] * len(tasks)
     
+    # Calculate completion times
+    for ex in execution_order:
+        pid, start_time, burst = ex
+        task_index = pid_to_index[pid]
+        end_time = start_time + burst
+        completion[task_index] = max(end_time, completion[task_index])
     
-    completion =[-1 for _ in tasks]
-    turnaround =[0 for _ in tasks]
-    waiting =[0 for _ in tasks]
-    
-    
-    for ex in execute:
-        completion[ex[0]-1]=max(ex[1]+ex[2],completion[ex[0]-1])
-        
-    for task in tasks:
-        x=completion[task[0]-1]-task[1]
-        turnaround[task[0]-1]=x
-        waiting[task[0]-1]=x-task[2]
+    # Calculate turnaround and waiting times
+    for i, task in enumerate(tasks):
+        pid, arrival, burst, _ = task
+        turnaround[i] = completion[i] - arrival
+        waiting[i] = turnaround[i] - burst
     
     ttk.Label(result_window, text=f"Algorithm Used: {algorithm}", font=("Arial", 12, "bold")).pack()
     tree = ttk.Treeview(result_window, columns=("PID", "Completion", "Waiting", "Turnaround"), show="headings")
@@ -239,21 +302,49 @@ def display_results(tasks,algorithm, execute):
     for i, task in enumerate(tasks):
         tree.insert("", tk.END, values=(task[0], completion[i], waiting[i], turnaround[i]))
     tree.pack()
+
+    avg_completion = sum(completion) / len(completion)
+    avg_waiting = sum(waiting) / len(waiting)
+    avg_turnaround = sum(turnaround) / len(turnaround)
     
-    visualize_gantt_chart(tasks, completion, execute)
+    ttk.Label(result_window, text=f"Average Completion Time: {avg_completion:.2f}", font=("Arial", 10)).pack()
+    ttk.Label(result_window, text=f"Average Waiting Time: {avg_waiting:.2f}", font=("Arial", 10)).pack()
+    ttk.Label(result_window, text=f"Average Turnaround Time: {avg_turnaround:.2f}", font=("Arial", 10)).pack()
+    
+    visualize_gantt_chart(tasks, execution_order)
 
-def visualize_gantt_chart(tasks, completion, execute):
-    fig, ax = plt.subplots()
-    color = 'skyblue'
+def visualize_gantt_chart(tasks, execution_order):
+    fig, ax = plt.subplots(figsize=(12, 6))
 
-    max_time = max(completion)
-    for t in range(max_time + 1):
-        ax.axvline(t, color='gray', linestyle='dashed', linewidth=0.5)
+    unique_pids = set(task[0] for task in tasks)
+    colors = plt.cm.tab10(np.linspace(0, 1, len(unique_pids)))
+    pid_to_color = {pid: colors[i % len(colors)] for i, pid in enumerate(unique_pids)}
 
-    for excute in execute:
-        ax.barh("Task " + str(excute[0]),excute[2] , left=excute[1],color=color)
+    max_time = max(ex[1] + ex[2] for ex in execution_order)
+
+    for t in range(0, max_time + 1, 1):
+        ax.axvline(t, color='gray', linestyle='dashed', linewidth=0.5, alpha=0.3)
+
+    process_labels = sorted(unique_pids)
+
+    for i, ex in enumerate(execution_order):
+        pid, start_time, burst = ex
+        y_pos = process_labels.index(pid)
+        
+        ax.barh(y_pos, burst, left=start_time, 
+               color=pid_to_color[pid], edgecolor='black', alpha=0.7)
+        
+        if burst > 1:  
+            ax.text(start_time + burst/2, y_pos, str(pid), 
+                   ha='center', va='center', color='black', fontweight='bold')
+    
+    # Set labels and title
     plt.xlabel("Time")
+    plt.ylabel("Process")
+    plt.yticks(range(len(process_labels)), [f"P{pid}" for pid in process_labels])
     plt.title("Gantt Chart")
+    plt.grid(True, axis='x', alpha=0.3)
+    plt.tight_layout()
     plt.show()
 
 root = tk.Tk()
